@@ -42,9 +42,9 @@ namespace Ryujinx.Graphics.OpenGL
             ResourcePool = new ResourcePool();
         }
 
-        public IShader CompileShader(ShaderProgram shader)
+        public IShader CompileShader(ShaderStage stage, string code)
         {
-            return new Shader(shader);
+            return new Shader(stage, code);
         }
 
         public BufferHandle CreateBuffer(int size)
@@ -113,7 +113,7 @@ namespace Ryujinx.Graphics.OpenGL
 
         public ICounterEvent ReportCounter(CounterType type, EventHandler<ulong> resultHandler)
         {
-            return _counters.QueueReport(type, resultHandler);
+            return _counters.QueueReport(type, resultHandler, _pipeline.DrawCount);
         }
 
         public void Initialize(GraphicsDebugLevel glLogLevel)
@@ -164,6 +164,20 @@ namespace Ryujinx.Graphics.OpenGL
             _pipeline.Dispose();
             _window.Dispose();
             _counters.Dispose();
+        }
+
+        public IProgram LoadProgramBinary(byte[] programBinary)
+        {
+            Program program = new Program(programBinary);
+
+            if (program.IsLinked)
+            {
+                return program;
+            }
+
+            program.Dispose();
+
+            return null;
         }
     }
 }

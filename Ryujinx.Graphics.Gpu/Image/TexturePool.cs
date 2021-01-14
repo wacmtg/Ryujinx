@@ -54,7 +54,7 @@ namespace Ryujinx.Graphics.Gpu.Image
 
                 // Bad address. We can't add a texture with a invalid address
                 // to the cache.
-                if (info.Address == MemoryManager.BadAddress)
+                if (info.Address == MemoryManager.PteUnmapped)
                 {
                     return null;
                 }
@@ -67,6 +67,22 @@ namespace Ryujinx.Graphics.Gpu.Image
             }
             else
             {
+                if (texture.ChangedSize)
+                {
+                    // Texture changed size at one point - it may be a different size than the sampler expects.
+                    // This can be triggered when the size is changed by a size hint on copy or draw, but the texture has been sampled before.
+
+                    TextureDescriptor descriptor = GetDescriptor(id);
+
+                    int width = descriptor.UnpackWidth();
+                    int height = descriptor.UnpackHeight();
+
+                    if (texture.Info.Width != width || texture.Info.Height != height)
+                    {
+                        texture.ChangeSize(width, height, texture.Info.DepthOrLayers);
+                    }
+                }
+
                 // Memory is automatically synchronized on texture creation.
                 texture.SynchronizeMemory();
             }
@@ -105,7 +121,7 @@ namespace Ryujinx.Graphics.Gpu.Image
 
                     // If the descriptors are the same, the texture is the same,
                     // we don't need to remove as it was not modified. Just continue.
-                    if (texture.IsPerfectMatch(GetInfo(descriptor), TextureSearchFlags.Strict))
+                    if (texture.IsExactMatch(GetInfo(descriptor), TextureSearchFlags.Strict) != TextureMatchQuality.NoMatch)
                     {
                         continue;
                     }

@@ -1,4 +1,4 @@
-using ARMeilleure.Memory;
+﻿using ARMeilleure.Memory;
 using Ryujinx.Cpu.Tracking;
 using Ryujinx.Memory;
 using Ryujinx.Memory.Tracking;
@@ -13,7 +13,7 @@ namespace Ryujinx.Cpu
     /// <summary>
     /// Represents a CPU memory manager.
     /// </summary>
-    public sealed class MemoryManager : IMemoryManager, IDisposable, IVirtualMemoryManager
+    public sealed class MemoryManager : IMemoryManager, IVirtualMemoryManager, IDisposable
     {
         public const int PageBits = 12;
         public const int PageSize = 1 << PageBits;
@@ -39,6 +39,8 @@ namespace Ryujinx.Cpu
         public IntPtr PageTablePointer => _pageTable.Pointer;
 
         public MemoryTracking Tracking { get; }
+
+        internal event Action<ulong, ulong> UnmapEvent;
 
         /// <summary>
         /// Creates a new instance of the memory manager.
@@ -100,6 +102,14 @@ namespace Ryujinx.Cpu
         /// <param name="size">Size of the range to be unmapped</param>
         public void Unmap(ulong va, ulong size)
         {
+            // If size is 0, there's nothing to unmap, just exit early.
+            if (size == 0)
+            {
+                return;
+            }
+
+            UnmapEvent?.Invoke(va, size);
+
             ulong remainingSize = size;
             ulong oVa = va;
             while (remainingSize != 0)
@@ -461,7 +471,37 @@ namespace Ryujinx.Cpu
         }
 
         /// <summary>
-        /// Checks if the page at a given CPU virtual address.
+        /// Checks if a memory range is mapped.
+        /// </summary>
+        /// <param name="va">Virtual address of the range</param>
+        /// <param name="size">Size of the range in bytes</param>
+        /// <returns>True if the entire range is mapped, false otherwise</returns>
+        public bool IsRangeMapped(ulong va, ulong size)
+        {
+            if (size == 0UL)
+            {
+                return true;
+            }
+
+            ulong endVa = (va + size + PageMask) & ~(ulong)PageMask;
+
+            va &= ~(ulong)PageMask;
+
+            while (va < endVa)
+            {
+                if (!IsMapped(va))
+                {
+                    return false;
+                }
+
+                va += PageSize;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Checks if the page at a given CPU virtual address is mapped.
         /// </summary>
         /// <param name="va">Virtual address to check</param>
         /// <returns>True if the address is mapped, false otherwise</returns>

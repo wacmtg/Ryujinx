@@ -11,6 +11,14 @@ namespace Ryujinx.Graphics.Gpu.Engine
         private const int StrideAlignment = 32;
         private const int GobAlignment = 64;
 
+        enum CopyFlags
+        {
+            SrcLinear = 1 << 7,
+            DstLinear = 1 << 8,
+            MultiLineEnable = 1 << 9,
+            RemapEnable = 1 << 10
+        }
+
         /// <summary>
         /// Determine if a buffer-to-texture region covers the entirety of a texture.
         /// </summary>
@@ -25,8 +33,8 @@ namespace Ryujinx.Graphics.Gpu.Engine
             if (linear)
             {
                 int alignWidth = StrideAlignment / bpp;
-                return tex.RegionX  == 0 &&
-                       tex.RegionY  == 0 &&
+                return tex.RegionX == 0 &&
+                       tex.RegionY == 0 &&
                        stride / bpp == BitUtils.AlignUp(cbp.XCount, alignWidth);
             }
             else
@@ -34,8 +42,8 @@ namespace Ryujinx.Graphics.Gpu.Engine
                 int alignWidth = GobAlignment / bpp;
                 return tex.RegionX == 0 &&
                        tex.RegionY == 0 &&
-                       tex.Width   == BitUtils.AlignUp(cbp.XCount, alignWidth) &&
-                       tex.Height  == cbp.YCount;
+                       tex.Width == BitUtils.AlignUp(cbp.XCount, alignWidth) &&
+                       tex.Height == cbp.YCount;
             }
         }
 
@@ -50,9 +58,12 @@ namespace Ryujinx.Graphics.Gpu.Engine
 
             var swizzle = state.Get<CopyBufferSwizzle>(MethodOffset.CopyBufferSwizzle);
 
-            bool srcLinear = (argument & (1 << 7)) != 0;
-            bool dstLinear = (argument & (1 << 8)) != 0;
-            bool copy2D    = (argument & (1 << 9)) != 0;
+            CopyFlags copyFlags = (CopyFlags)argument;
+
+            bool srcLinear = copyFlags.HasFlag(CopyFlags.SrcLinear);
+            bool dstLinear = copyFlags.HasFlag(CopyFlags.DstLinear);
+            bool copy2D    = copyFlags.HasFlag(CopyFlags.MultiLineEnable);
+            bool remap     = copyFlags.HasFlag(CopyFlags.RemapEnable);
 
             int size = cbp.XCount;
 
@@ -64,8 +75,8 @@ namespace Ryujinx.Graphics.Gpu.Engine
             if (copy2D)
             {
                 // Buffer to texture copy.
-                int srcBpp = swizzle.UnpackSrcComponentsCount() * swizzle.UnpackComponentSize();
-                int dstBpp = swizzle.UnpackDstComponentsCount() * swizzle.UnpackComponentSize();
+                int srcBpp = remap ? swizzle.UnpackSrcComponentsCount() * swizzle.UnpackComponentSize() : 1;
+                int dstBpp = remap ? swizzle.UnpackDstComponentsCount() * swizzle.UnpackComponentSize() : 1;
 
                 var dst = state.Get<CopyBufferTexture>(MethodOffset.CopyBufferDstTexture);
                 var src = state.Get<CopyBufferTexture>(MethodOffset.CopyBufferSrcTexture);
@@ -95,10 +106,10 @@ namespace Ryujinx.Graphics.Gpu.Engine
                 (int dstBaseOffset, int dstSize) = dstCalculator.GetRectangleRange(dst.RegionX, dst.RegionY, cbp.XCount, cbp.YCount);
 
                 ReadOnlySpan<byte> srcSpan = _context.PhysicalMemory.GetSpan(srcBaseAddress + (ulong)srcBaseOffset, srcSize, true);
-                Span<byte> dstSpan = _context.PhysicalMemory.GetSpan(dstBaseAddress + (ulong)dstBaseOffset, dstSize).ToArray();
+                Span<byte> dstSpan         = _context.PhysicalMemory.GetSpan(dstBaseAddress + (ulong)dstBaseOffset, dstSize).ToArray();
 
                 bool completeSource = IsTextureCopyComplete(cbp, src, srcLinear, srcBpp, cbp.SrcStride);
-                bool completeDest = IsTextureCopyComplete(cbp, dst, dstLinear, dstBpp, cbp.DstStride);
+                bool completeDest   = IsTextureCopyComplete(cbp, dst, dstLinear, dstBpp, cbp.DstStride);
 
                 if (completeSource && completeDest)
                 {
@@ -130,7 +141,7 @@ namespace Ryujinx.Graphics.Gpu.Engine
                                 srcBpp,
                                 src.MemoryLayout.UnpackGobBlocksInY(),
                                 src.MemoryLayout.UnpackGobBlocksInZ(),
-                                src.MemoryLayout.UnpackGobBlocksInX(),
+                                1,
                                 new SizeInfo((int)target.Size),
                                 srcSpan);
                         }
@@ -189,8 +200,24 @@ namespace Ryujinx.Graphics.Gpu.Engine
             }
             else
             {
-                // Buffer to buffer copy.
-                BufferManager.CopyBuffer(cbp.SrcAddress, cbp.DstAddress, (uint)size);
+                if (remap &&
+                    swizzle.UnpackDstX() == BufferSwizzleComponent.ConstA &&
+                    swizzle.UnpackDstY() == BufferSwizzleComponent.ConstA &&
+                    swizzle.UnpackDstZ() == BufferSwizzleComponent.ConstA &&
+                    swizzle.UnpackDstW() == BufferSwizzleComponent.ConstA &&
+                    swizzle.UnpackSrcComponentsCount() == 1 &&
+                    swizzle.UnpackDstComponentsCount() == 1 &&
+                    swizzle.UnpackComponentSize() == 4)
+                {
+                    // Fast path for clears when remap is enabled.
+                    BufferManager.ClearBuffer(cbp.DstAddress, (uint)size * 4, state.Get<uint>(MethodOffset.CopyBufferConstA));
+                }
+                else
+                {
+                    // TODO: Implement remap functionality.
+                    // Buffer to buffer copy.
+                    BufferManager.CopyBuffer(cbp.SrcAddress, cbp.DstAddress, (uint)size);
+                }
             }
         }
     }

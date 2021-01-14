@@ -1,6 +1,5 @@
 using Ryujinx.Common;
 using Ryujinx.Graphics.GAL;
-using Ryujinx.Graphics.Gpu.State;
 using Ryujinx.Graphics.Texture;
 using System;
 
@@ -89,26 +88,6 @@ namespace Ryujinx.Graphics.Gpu.Image
         }
 
         /// <summary>
-        /// Finds the appropriate depth format for a copy texture if the source texture has a depth format.
-        /// </summary>
-        /// <param name="dstTextureFormat">Destination CopyTexture Format</param>
-        /// <param name="srcTextureFormat">Source Texture Format</param>
-        /// <returns>Derived RtFormat if srcTextureFormat is a depth format, otherwise return dstTextureFormat.</returns>
-        public static RtFormat DeriveDepthFormat(RtFormat dstTextureFormat, Format srcTextureFormat)
-        {
-            return srcTextureFormat switch
-            {
-                Format.S8Uint => RtFormat.S8Uint,
-                Format.D16Unorm => RtFormat.D16Unorm,
-                Format.D24X8Unorm => RtFormat.D24Unorm,
-                Format.D32Float => RtFormat.D32Float,
-                Format.D24UnormS8Uint => RtFormat.D24UnormS8Uint,
-                Format.D32FloatS8Uint => RtFormat.D32FloatS8Uint,
-                _ => dstTextureFormat
-            };
-        }
-
-        /// <summary>
         /// Checks if two formats are compatible, according to the host API copy format compatibility rules.
         /// </summary>
         /// <param name="lhs">First comparand</param>
@@ -116,7 +95,7 @@ namespace Ryujinx.Graphics.Gpu.Image
         /// <returns>True if the formats are compatible, false otherwise</returns>
         public static bool FormatCompatible(FormatInfo lhs, FormatInfo rhs)
         {
-            if (IsDsFormat(lhs.Format) || IsDsFormat(rhs.Format))
+            if (lhs.Format.IsDepthOrStencil() || rhs.Format.IsDepthOrStencil())
             {
                 return lhs.Format == rhs.Format;
             }
@@ -146,14 +125,14 @@ namespace Ryujinx.Graphics.Gpu.Image
         /// <param name="rhs">Texture information to compare with</param>
         /// <param name="forSampler">Indicates that the texture will be used for shader sampling</param>
         /// <param name="forCopy">Indicates that the texture will be used as copy source or target</param>
-        /// <returns>True if the format matches, with the given comparison rules</returns>
-        public static bool FormatMatches(TextureInfo lhs, TextureInfo rhs, bool forSampler, bool forCopy)
+        /// <returns>A value indicating how well the formats match</returns>
+        public static TextureMatchQuality FormatMatches(TextureInfo lhs, TextureInfo rhs, bool forSampler, bool forCopy)
         {
             // D32F and R32F texture have the same representation internally,
             // however the R32F format is used to sample from depth textures.
             if (lhs.FormatInfo.Format == Format.D32Float && rhs.FormatInfo.Format == Format.R32Float && (forSampler || forCopy))
             {
-                return true;
+                return TextureMatchQuality.FormatAlias;
             }
 
             if (forCopy)
@@ -162,22 +141,22 @@ namespace Ryujinx.Graphics.Gpu.Image
                 // use equivalent color formats. We must also consider them as compatible.
                 if (lhs.FormatInfo.Format == Format.S8Uint && rhs.FormatInfo.Format == Format.R8Unorm)
                 {
-                    return true;
+                    return TextureMatchQuality.FormatAlias;
                 }
 
                 if (lhs.FormatInfo.Format == Format.D16Unorm && rhs.FormatInfo.Format == Format.R16Unorm)
                 {
-                    return true;
+                    return TextureMatchQuality.FormatAlias;
                 }
 
                 if ((lhs.FormatInfo.Format == Format.D24UnormS8Uint ||
                      lhs.FormatInfo.Format == Format.D24X8Unorm) && rhs.FormatInfo.Format == Format.B8G8R8A8Unorm)
                 {
-                    return true;
+                    return TextureMatchQuality.FormatAlias;
                 }
             }
 
-            return lhs.FormatInfo.Format == rhs.FormatInfo.Format;
+            return lhs.FormatInfo.Format == rhs.FormatInfo.Format ? TextureMatchQuality.Perfect : TextureMatchQuality.NoMatch;
         }
 
         /// <summary>
@@ -295,7 +274,9 @@ namespace Ryujinx.Graphics.Gpu.Image
                 return false;
             }
 
-            if (alignSizes)
+            bool isTextureBuffer = lhs.Target == Target.TextureBuffer || rhs.Target == Target.TextureBuffer;
+
+            if (alignSizes && !isTextureBuffer)
             {
                 Size size0 = GetAlignedSize(lhs);
                 Size size1 = GetAlignedSize(rhs);
@@ -566,27 +547,6 @@ namespace Ryujinx.Graphics.Gpu.Image
             }
 
             return FormatClass.Unclassified;
-        }
-
-        /// <summary>
-        /// Checks if the format is a depth-stencil texture format.
-        /// </summary>
-        /// <param name="format">Format to check</param>
-        /// <returns>True if the format is a depth-stencil format (including depth only), false otherwise</returns>
-        private static bool IsDsFormat(Format format)
-        {
-            switch (format)
-            {
-                case Format.D16Unorm:
-                case Format.D24X8Unorm:
-                case Format.D24UnormS8Uint:
-                case Format.D32Float:
-                case Format.D32FloatS8Uint:
-                case Format.S8Uint:
-                    return true;
-            }
-
-            return false;
         }
     }
 }
